@@ -11,18 +11,16 @@ import 'academic_panel.dart';
 import 'course_page.dart';
 import 'friends_page.dart';
 import 'release_hub.dart';
+import 'product_center.dart';
+import 'product_chat.dart';
 import 'play_hub.dart';
 
 void main() => runApp(const StuClub());
 const purple = ClubStyle.green;
 const navy = ClubStyle.ink;
-final universities = {
-  'cairo': 'جامعة القاهرة',
-  'ain_shams': 'جامعة عين شمس',
-  'alex': 'جامعة الإسكندرية',
-  'school_demo': 'مدرسة تجريبية · تجربة محلية',
-};
-final institutionKinds = <String, String>{'school_demo': 'school'};
+final universities = <String, String>{};
+final institutionKinds = <String, String>{};
+
 typedef Json = Map<String, dynamic>;
 
 class StuClub extends StatelessWidget {
@@ -121,9 +119,10 @@ class _ClubState extends State<Club> {
 
   bool get needsApproval =>
       me != null &&
-      (me!['institutionKind'] == 'school' ||
-          institutionKinds[me!['university']] == 'school') &&
-      me!['verified'] != true &&
+      (me!['membershipStatus'] == 'pending' ||
+          ((me!['institutionKind'] == 'school' ||
+                  institutionKinds[me!['university']] == 'school') &&
+              me!['verified'] != true)) &&
       me!['role'] != 'admin';
 
   Widget approval() => card(
@@ -151,12 +150,16 @@ class _ClubState extends State<Club> {
 
   Future<void> loadInstitutions() async {
     final r = await api.call('/universities');
-    if (r['items'] is List && (r['items'] as List).isNotEmpty) {
+    if (r['items'] is List) {
+      universities.clear();
+      institutionKinds.clear();
       for (final i in r['items'] as List) {
-        universities[i['id'] as String] = i['name'] as String;
-        institutionKinds[i['id'] as String] =
-            (i['kind'] as String?) ?? 'university';
+        universities[i['id']] = i['name'];
+        institutionKinds[i['id']] = i['kind'] ?? 'university';
       }
+    }
+    if (!universities.containsKey(university)) {
+      university = universities.keys.firstOrNull ?? '';
     }
   }
 
@@ -624,8 +627,15 @@ class _ClubState extends State<Club> {
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 7),
+              if (universities.isEmpty)
+                const Text(
+                  'لم تُضف مؤسسات متاحة بعد. تواصل مع إدارة StuClub.',
+                  style: TextStyle(color: ClubStyle.muted),
+                ),
               DropdownButtonFormField<String>(
-                initialValue: university,
+                initialValue: universities.containsKey(university)
+                    ? university
+                    : null,
                 isExpanded: true,
                 items: universities.entries
                     .map(
@@ -670,7 +680,7 @@ class _ClubState extends State<Club> {
                 ),
               ),
             FilledButton(
-              onPressed: authenticate,
+              onPressed: register && universities.isEmpty ? null : authenticate,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -1261,6 +1271,44 @@ class _ClubState extends State<Club> {
                       '${p['commentCount'] ?? 0} تعليق',
                       () => openTool(commentsPage(api, p, me!['id'] as String)),
                     ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'حفظ المنشور',
+                      icon: Icon(
+                        p['saved'] == true
+                            ? Icons.bookmark
+                            : Icons.bookmark_border,
+                      ),
+                      onPressed: () => run(() async {
+                        await api.call(
+                          '/product/posts/${p['id']}/save',
+                          method: 'POST',
+                          body: {},
+                        );
+                        await refresh();
+                      }),
+                    ),
+                    if (p['user'] == me!['id'])
+                      IconButton(
+                        tooltip: 'تعديل المنشور',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => run(() async {
+                          final f = await askFields(
+                            context,
+                            'تعديل المنشور',
+                            {'text': 'النص'},
+                            initial: {'text': p['text']},
+                          );
+                          if (f != null) {
+                            await api.call(
+                              '/product/posts/${p['id']}',
+                              method: 'PATCH',
+                              body: f,
+                            );
+                            await refresh();
+                          }
+                        }),
+                      ),
                   ],
                 ),
               ],
@@ -1335,6 +1383,20 @@ class _ClubState extends State<Club> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         heading('مكانك وسط ناس شبهك'),
+        TextButton.icon(
+          icon: const Icon(Icons.add),
+          label: const Text('إنشاء مجموعة'),
+          onPressed: () => run(() async {
+            final f = await askFields(context, 'مجموعة جديدة', {
+              'name': 'اسم المجموعة',
+              'description': 'وصف المجموعة',
+            });
+            if (f != null) {
+              await api.call('/product/groups', method: 'POST', body: f);
+              await refresh();
+            }
+          }),
+        ),
         const Text(
           'اتعلّموا سوا، شاركوا اهتماماتكم، واعملوا ذكريات.',
           style: TextStyle(fontSize: 12, color: ClubStyle.muted),
@@ -1857,6 +1919,11 @@ class _ClubState extends State<Club> {
               () => openTool(pollsPage(api)),
             ),
             menuTile(
+              Icons.hub_outlined,
+              'مجتمعي وخدماتي',
+              () => openTool(ProductCenter(api: api)),
+            ),
+            menuTile(
               Icons.notifications_active_outlined,
               'البريد وإشعارات الهاتف',
               () => openTool(servicePage(api)),
@@ -1970,7 +2037,7 @@ class _ClubState extends State<Club> {
             Padding(
               padding: EdgeInsets.fromLTRB(18, 0, 18, 18),
               child: Text(
-                'نسخة محلية تعمل مع خادم الكمبيوتر. يمكنك مشاركة صور وفيديو حتى ٢٠ ميجابايت. التنبيهات تظهر داخل التطبيق، والتوثيق يُراجع يدويًا.',
+                'مجتمعك مرتبط بالمؤسسة التي تنتمي إليها. راجع الجلسات والخصوصية والدعم من مجتمعي وخدماتي.',
                 style: TextStyle(
                   fontSize: 11,
                   color: ClubStyle.muted,
@@ -2222,7 +2289,7 @@ class _TextPromptState extends State<TextPrompt> {
   );
 }
 
-class GroupChat extends StatefulWidget {
+class GroupChat extends StatelessWidget {
   final Api api;
   final Json group;
   final String currentUserId;
@@ -2233,179 +2300,10 @@ class GroupChat extends StatefulWidget {
     this.currentUserId = '',
   });
   @override
-  State<GroupChat> createState() => _GroupChatState();
-}
-
-class _GroupChatState extends State<GroupChat> {
-  final text = TextEditingController();
-  List<dynamic> messages = [];
-  String? error;
-  bool fetching = false, sending = false;
-  Timer? timer;
-  @override
-  void initState() {
-    super.initState();
-    load();
-    timer = Timer.periodic(const Duration(seconds: 4), (_) => load());
-  }
-
-  @override
-  void dispose() {
-    timer?.cancel();
-    text.dispose();
-    super.dispose();
-  }
-
-  Future<void> load() async {
-    if (fetching) return;
-    fetching = true;
-    try {
-      final data = await widget.api.call(
-        '/groups/${widget.group['id']}/messages',
-      );
-      if (mounted) {
-        setState(() {
-          messages = data['items'] as List;
-          error = null;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    } finally {
-      fetching = false;
-    }
-  }
-
-  Future<void> send() async {
-    final value = text.text.trim();
-    if (value.isEmpty || sending) return;
-    setState(() => sending = true);
-    try {
-      await widget.api.call(
-        '/groups/${widget.group['id']}/messages',
-        method: 'POST',
-        body: {'text': value},
-      );
-      text.clear();
-      await load();
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    } finally {
-      if (mounted) setState(() => sending = false);
-    }
-  }
-
-  Future<void> reportMessage(Map<String, dynamic> message) async {
-    final values = await askFields(context, 'إبلاغ عن الرسالة', {
-      'reason': 'سبب الإبلاغ',
-    });
-    if (values == null || !mounted) return;
-    try {
-      await widget.api.call(
-        '/reports',
-        method: 'POST',
-        body: {
-          'type': 'messages',
-          'target': message['id'],
-          'reason': values['reason'],
-        },
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('تم حفظ البلاغ للمراجعة')));
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: ClubStyle.mint,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.groups_outlined, size: 21, color: purple),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.group['name'] as String,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const Text(
-                  'مجموعة جامعتك',
-                  style: TextStyle(fontSize: 10, color: ClubStyle.muted),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-    body: Column(
-      children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: Text(
-            'فكرة جديدة أو سؤال بسيط… شاركه مع المجموعة.',
-            style: TextStyle(fontSize: 10, color: ClubStyle.muted),
-          ),
-        ),
-        if (error != null)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              error!,
-              style: const TextStyle(color: Colors.deepOrange, fontSize: 12),
-            ),
-          ),
-        Expanded(
-          child: messages.isEmpty
-              ? const Center(
-                  child: ClubEmpty(
-                    title: 'هنا بتبدأ الأفكار',
-                    subtitle: 'عرّف زملاءك بنفسك وابدأ أول حوار.',
-                    icon: Icons.groups_outlined,
-                  ),
-                )
-              : ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 14,
-                  ),
-                  itemCount: messages.length,
-                  itemBuilder: (_, i) {
-                    final m =
-                        messages[messages.length - 1 - i]
-                            as Map<String, dynamic>;
-                    final mine = m['user'] == widget.currentUserId;
-                    return MessageBubble(
-                      name: m['author']['name'] as String,
-                      text: m['text'] as String,
-                      mine: mine,
-                      created: m['created'] as String?,
-                      report: mine ? null : () => reportMessage(m),
-                    );
-                  },
-                ),
-        ),
-        MessageComposer(controller: text, sending: sending, send: send),
-      ],
-    ),
+  Widget build(BuildContext context) => ProductChat(
+    api: api,
+    kind: 'group',
+    target: group['id'],
+    title: group['name'],
   );
 }

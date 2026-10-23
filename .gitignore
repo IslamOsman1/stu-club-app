@@ -66,6 +66,7 @@ backend/run/
 # Local archives, secrets and generated files
 .dist/
 **/.gradle/
+/android/build/
 **/.kotlin/
 **/local.properties
 .env

@@ -233,7 +233,27 @@ extension ClubFeatures on ClubServer {
     String? target,
   }) {
     if (recipient == actor || blocked(recipient, actor)) return;
-    if (pushReady) pendingPush.add(recipient);
+    final prefs = rows('notificationSettings')
+        .where((r) => r['id'] == recipient)
+        .firstOrNull;
+    final category = ['announcement', 'event'].contains(text)
+        ? 'academic'
+        : text == 'message'
+        ? 'messages'
+        : [
+            'like',
+            'comment',
+            'friend',
+            'game',
+            'friend_request',
+            'friend_accept',
+            'game_invite',
+            'group_invite',
+          ].contains(text)
+        ? 'social'
+        : null;
+    if (category != null && prefs?[category] == false) return;
+    if (pushReady && prefs?['push'] != false) pendingPush.add(recipient);
     rows('notifications').add({
       'id': id(),
       'user': recipient,
@@ -247,7 +267,13 @@ extension ClubFeatures on ClubServer {
   }
 
   void removeContent(String type, Map<String, dynamic> row) {
+    if (row['voice'] != null) {
+      final disk = File('${file.parent.path}/voice/${row['voice']}.m4a');
+      if (disk.existsSync()) disk.deleteSync();
+      rows('voiceAttachments').removeWhere((v) => v['id'] == row['voice']);
+    }
     if (type == 'posts') {
+      rows('savedPosts').removeWhere((s) => s['post'] == row['id']);
       rows('comments').removeWhere((c) => c['post'] == row['id']);
     }
     if (row['media'] != null) {
@@ -286,6 +312,11 @@ extension ClubFeatures on ClubServer {
 
   Future<void> serveMedia(HttpRequest request) async {
     final user = await authenticated(request), uid = user['id'] as String;
+    if (user['role'] != 'admin' &&
+        (user['membershipStatus'] == 'pending' ||
+            institutionConfig(user['university'])['active'] == false)) {
+      throw ApiError(403, 'المؤسسة غير متاحة');
+    }
     if ((requireVerification || school(user)) &&
         user['verified'] != true &&
         user['role'] != 'admin') {
@@ -344,6 +375,7 @@ extension ClubFeatures on ClubServer {
       user['salt'] = base64.encode(salt);
       user['password'] = base64.encode(await hash.extractBytes());
       rows('sessions').removeWhere((s) => s['user'] == uid);
+      rows('devices').removeWhere((s) => s['user'] == uid);
       save();
       return {'ok': true};
     }
@@ -432,6 +464,7 @@ extension ClubFeatures on ClubServer {
       for (final key in ['friends', 'duels']) {
         rows(key).removeWhere((r) => r['from'] == uid || r['to'] == uid);
       }
+      deleteProductData(uid);
       rows('users').remove(user);
       save();
       return {'ok': true};
@@ -691,9 +724,10 @@ extension ClubFeatures on ClubServer {
       if (mime == null) {
         throw ApiError(400, 'الصيغ المدعومة: JPG وPNG وWEBP وMP4');
       }
-      final total = [...rows('media'), ...rows('documents')]
-          .where((m) => m['user'] == uid)
-          .fold<int>(0, (s, m) => s + (m['size'] as int));
+      final total =
+          [...rows('media'), ...rows('documents'), ...rows('voiceAttachments')]
+              .where((m) => m['user'] == uid)
+              .fold<int>(0, (s, m) => s + (m['size'] as int));
       if (total + bytes.length > 150 * 1024 * 1024) {
         throw ApiError(413, 'وصلت لحد التخزين المحلي للحساب');
       }
@@ -718,6 +752,13 @@ extension ClubFeatures on ClubServer {
       if (path == '/admin/overview' && method == 'GET') {
         return {
           'reports': rows('reports')
+              .where(
+                (r) =>
+                    manages(user, 'reports') &&
+                    (owner(user) ||
+                        find('users', r['user'])?['university'] ==
+                            user['university']),
+              )
               .toList()
               .reversed
               .take(200)
@@ -731,7 +772,14 @@ extension ClubFeatures on ClubServer {
               )
               .toList(),
           'verification': rows('verification')
-              .where((v) => v['status'] == 'pending')
+              .where(
+                (v) =>
+                    v['status'] == 'pending' &&
+                    manages(user, 'verification') &&
+                    (owner(user) ||
+                        find('users', v['user'])?['university'] ==
+                            user['university']),
+              )
               .map(
                 (v) => {
                   ...v as Map<String, dynamic>,
@@ -741,6 +789,11 @@ extension ClubFeatures on ClubServer {
               )
               .toList(),
           'users': rows('users')
+              .where(
+                (v) =>
+                    manages(user, 'users') &&
+                    (owner(user) || v['university'] == user['university']),
+              )
               .map((u) => publicUser(u as Map<String, dynamic>))
               .toList(),
         };
@@ -787,10 +840,27 @@ extension ClubFeatures on ClubServer {
         }
         if (b['action'] == 'remove') {
           final target = find(r['type'], r['target']);
-          if (target != null) removeContent(r['type'], target);
+          if (target != null) {
+            r['contentOwner'] = target['user'] ?? target['from'];
+            r['decisionReason'] = b['reason'] is String
+                ? (b['reason'] as String).substring(
+                    0,
+                    min(500, (b['reason'] as String).length),
+                  )
+                : r['reason'];
+            removeContent(r['type'], target);
+            notify(
+              r['contentOwner'],
+              uid,
+              'moderation',
+              'تمت إزالة محتوى بعد مراجعة بلاغ',
+              target: r['id'],
+            );
+          }
         }
         r['status'] = b['action'];
         r['reviewer'] = uid;
+        auditAction(user, 'report-decision', r['id']);
         save();
         return {'ok': true};
       }

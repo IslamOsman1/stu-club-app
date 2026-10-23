@@ -74,6 +74,7 @@ class SchoolApi extends FakeApi {
     if (path == '/auth/login') {
       result['user'] = Map<String, dynamic>.from(result['user'] as Map);
       result['user']['university'] = 'school_demo';
+      result['user']['institutionKind'] = 'school';
       result['user']['verified'] = false;
     }
     return result;

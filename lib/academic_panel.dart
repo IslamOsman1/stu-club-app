@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'dart:convert';
+
 import 'api.dart';
 import 'design.dart';
 import 'course_page.dart';
@@ -71,7 +73,7 @@ class _AcademicPanelState extends State<AcademicPanel> {
       if (!mounted) return;
       final result = await showDialog<Map<String, dynamic>>(
         context: context,
-        builder: (_) => AnnouncementComposer(groups: targets),
+        builder: (_) => AnnouncementComposer(groups: targets, api: widget.api),
       );
       if (result == null) return;
       await widget.api.call('/announcements', method: 'POST', body: result);
@@ -96,6 +98,34 @@ class _AcademicPanelState extends State<AcademicPanel> {
             child: Text('${a['audience'] ?? 'إعلان المؤسسة'}\n\n${a['text']}'),
           ),
           actions: [
+            if (a['document'] != null)
+              TextButton.icon(
+                icon: const Icon(Icons.download),
+                label: const Text('تحميل المرفق'),
+                onPressed: () async {
+                  try {
+                    final docs =
+                        (await widget.api.call('/documents'))['items'] as List;
+                    final doc = docs
+                        .where((d) => d['id'] == a['document'])
+                        .firstOrNull;
+                    if (doc == null) throw ApiException('المرفق لم يعد متاحًا');
+                    final bytes = await widget.api.binary(
+                      '/documents/${doc['id']}/content',
+                    );
+                    await Api.storage.invokeMethod('saveDocument', {
+                      'name': doc['name'],
+                      'mime': doc['mime'],
+                      'data': base64Encode(bytes),
+                    });
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx)
+                          .showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  }
+                },
+              ),
             if (a.containsKey('viewCount'))
               TextButton(
                 onPressed: () async {
@@ -278,7 +308,8 @@ class _AcademicPanelState extends State<AcademicPanel> {
 
 class AnnouncementComposer extends StatefulWidget {
   final List<dynamic> groups;
-  const AnnouncementComposer({super.key, required this.groups});
+  final Api? api;
+  const AnnouncementComposer({super.key, required this.groups, this.api});
   @override
   State<AnnouncementComposer> createState() => _AnnouncementComposerState();
 }
@@ -290,9 +321,55 @@ class _AnnouncementComposerState extends State<AnnouncementComposer> {
   void initState() {
     super.initState();
     group = widget.groups.first['value'] as String;
+    widget.api
+        ?.call('/documents')
+        .then((r) {
+          if (mounted) setState(() => documents = r['items']);
+        })
+        .catchError((Object e) {
+          if (mounted) setState(() => attachmentError = '$e');
+        });
   }
 
   bool pinned = false;
+  DateTime? publishAt, expiresAt;
+  String importance = 'normal';
+  List documents = [];
+  String? document, attachmentError;
+  Future<void> chooseDate(bool expiry) async {
+    final current = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: (expiry ? expiresAt : publishAt) ?? current,
+      firstDate: current,
+      lastDate: current.add(const Duration(days: 730)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (time == null || !mounted) return;
+    final value = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+    setState(() {
+      if (expiry) {
+        expiresAt = value;
+      } else {
+        publishAt = value;
+      }
+    });
+  }
+
+  String dateLabel(DateTime? value, String fallback) => value == null
+      ? fallback
+      : '${value.year}/${value.month}/${value.day} ${value.hour}:${value.minute.toString().padLeft(2, '0')}';
+
   @override
   void dispose() {
     text.dispose();
@@ -328,6 +405,61 @@ class _AnnouncementComposerState extends State<AnnouncementComposer> {
               onChanged: (v) => setState(() => group = v!),
               decoration: const InputDecoration(labelText: 'الجمهور'),
             ),
+            DropdownButtonFormField<String>(
+              initialValue: importance,
+              decoration: const InputDecoration(labelText: 'أهمية الإعلان'),
+              items: const [
+                DropdownMenuItem(value: 'normal', child: Text('عادي')),
+                DropdownMenuItem(value: 'important', child: Text('مهم')),
+                DropdownMenuItem(value: 'urgent', child: Text('عاجل')),
+              ],
+              onChanged: (v) => setState(() => importance = v!),
+            ),
+            ListTile(
+              title: const Text('موعد النشر'),
+              subtitle: Text(dateLabel(publishAt, 'النشر فورًا')),
+              onTap: () => chooseDate(false),
+              trailing: publishAt == null
+                  ? const Icon(Icons.schedule)
+                  : IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () => setState(() => publishAt = null),
+                    ),
+            ),
+            ListTile(
+              title: const Text('انتهاء الإعلان'),
+              subtitle: Text(dateLabel(expiresAt, 'بدون انتهاء')),
+              onTap: () => chooseDate(true),
+              trailing: expiresAt == null
+                  ? const Icon(Icons.event)
+                  : IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () => setState(() => expiresAt = null),
+                    ),
+            ),
+            if (attachmentError != null)
+              Text(
+                attachmentError!,
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+            DropdownButtonFormField<String>(
+              initialValue: document,
+              decoration: const InputDecoration(
+                labelText: 'مستند مرفق (اختياري)',
+              ),
+              items: [
+                const DropdownMenuItem<String>(
+                  value: null,
+                  child: Text('بدون مرفق'),
+                ),
+                for (final d in documents)
+                  DropdownMenuItem(
+                    value: d['id'] as String,
+                    child: Text(d['name']),
+                  ),
+              ],
+              onChanged: (v) => document = v,
+            ),
             SwitchListTile(
               title: const Text('تثبيت الإعلان'),
               value: pinned,
@@ -344,12 +476,25 @@ class _AnnouncementComposerState extends State<AnnouncementComposer> {
         FilledButton(
           onPressed: () {
             if (text.text.trim().isNotEmpty) {
+              if (expiresAt != null &&
+                  !expiresAt!.isAfter(publishAt ?? DateTime.now())) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('الانتهاء يجب أن يكون بعد النشر'),
+                  ),
+                );
+                return;
+              }
               Navigator.pop(context, {
                 'text': text.text.trim(),
                 'section': group.startsWith('section:')
                     ? group.substring(8)
                     : null,
                 'pinned': pinned,
+                'importance': importance,
+                'document': document,
+                'publishAt': publishAt?.toUtc().toIso8601String(),
+                'expiresAt': expiresAt?.toUtc().toIso8601String(),
               });
             }
           },

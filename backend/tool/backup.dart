@@ -24,7 +24,7 @@ void main(List<String> args) {
   } else {
     if (source.existsSync()) source.copySync('${destination.path}/club.json');
   }
-  for (final name in ['media', 'documents']) {
+  for (final name in ['media', 'documents', 'voice']) {
     final directory = Directory('${source.parent.path}/$name');
     if (directory.existsSync()) {
       final target = Directory('${destination.path}/$name')..createSync();

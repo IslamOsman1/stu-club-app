@@ -1,16 +1,34 @@
 part of 'server.dart';
 
 extension InstitutionFeatures on ClubServer {
-  List<Map<String, dynamic>> institutionList() => [
-    ...universities.map(
-      (v) => {
-        'id': v['id'],
-        'name': v['name'],
-        'kind': v['id'] == 'school_demo' ? 'school' : 'university',
-      },
-    ),
-    ...rows('institutions').cast<Map<String, dynamic>>(),
-  ];
+  List<Map<String, dynamic>> institutionList() {
+    final legacy = seedCatalog
+        ? universities
+        : universities.where(
+            (i) => rows('users').any((u) => u['university'] == i['id']),
+          );
+    final result = <Map<String, dynamic>>[
+      for (final v in legacy)
+        {
+          'id': v['id'],
+          'name': v['name'],
+          'kind': v['id'] == 'school_demo' ? 'school' : 'university',
+          ...institutionConfig(v['id']!),
+        },
+      ...rows('institutions')
+          .cast<Map<String, dynamic>>()
+          .map((v) => {...v, ...institutionConfig(v['id'])}),
+    ];
+    if (!seedCatalog && !result.any((i) => i['id'] == 'platform')) {
+      result.insert(0, {
+        'id': 'platform',
+        'name': 'إدارة StuClub',
+        'kind': 'platform',
+      });
+    }
+    return result;
+  }
+
   Map<String, dynamic>? institution(String id) =>
       institutionList().where((v) => v['id'] == id).firstOrNull;
   bool school(Map<String, dynamic> u) =>
@@ -85,9 +103,13 @@ extension InstitutionFeatures on ClubServer {
     if (path == '/institutions/manage' && method == 'GET') {
       if (u['role'] != 'admin') throw ApiError(403, 'للمشرف فقط');
       return {
-        'items': institutionList(),
+        'items': institutionList()
+            .where((v) => owner(u) || v['id'] == u['university'])
+            .toList(),
         'people': rows('users')
-            .where((p) => p['university'] == u['university'])
+            .where(
+              (p) => manages(u, 'users') && p['university'] == u['university'],
+            )
             .map((p) => publicUser(p))
             .toList(),
       };
@@ -115,6 +137,9 @@ extension InstitutionFeatures on ClubServer {
         throw ApiError(403, 'تبديل نطاق الإدارة للمشرف فقط');
       }
       final b = await body(req), target = field(b, 'institution');
+      if (!owner(u) && target != u['university']) {
+        throw ApiError(403, 'لا يمكنك تغيير نطاق المؤسسة');
+      }
       if (institution(target) == null) {
         throw ApiError(404, 'المؤسسة غير موجودة');
       }

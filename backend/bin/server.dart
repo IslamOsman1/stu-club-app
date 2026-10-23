@@ -16,6 +16,10 @@ import 'package:cryptography/cryptography.dart';
 part 'features.dart';
 part 'academic.dart';
 part 'owner_setup.dart';
+part 'product_foundation.dart';
+part 'product_events.dart';
+part 'product_social.dart';
+part 'product_voice.dart';
 part 'courses.dart';
 part 'friends_play.dart';
 part 'institutions.dart';
@@ -47,6 +51,7 @@ class ClubServer {
   Future<void> Function(String, String, String)? mailTransport;
   final Set<String> pendingPush = {};
   bool requireVerification = false;
+  final bool seedCatalog;
   late Map<String, dynamic> data;
   final attempts = <String, List<DateTime>>{};
   final kdf = Pbkdf2(
@@ -54,7 +59,8 @@ class ClubServer {
     iterations: 210000,
     bits: 256,
   );
-  ClubServer(String path, {bool sqlite = false}) : file = File(path) {
+  ClubServer(String path, {bool sqlite = false, this.seedCatalog = true})
+    : file = File(path) {
     if (sqlite) {
       file.parent.createSync(recursive: true);
       store = SqliteStore("$path.sqlite");
@@ -113,7 +119,18 @@ class ClubServer {
     ]) {
       data.putIfAbsent(key, () => <dynamic>[]);
     }
-    if (!rows('groups').any((g) => g['university'] == 'school_demo')) {
+    for (final key in [
+      ...productCollections,
+      'voiceAttachments',
+      'groupInvites',
+    ]) {
+      data.putIfAbsent(key, () => <dynamic>[]);
+    }
+    for (final session in rows('sessions')) {
+      session.putIfAbsent('handle', id);
+    }
+    if (seedCatalog &&
+        !rows('groups').any((g) => g['university'] == 'school_demo')) {
       for (final title in ['الصف التجريبي', 'الأنشطة المدرسية']) {
         rows('groups').add({
           'id': id(),
@@ -127,7 +144,7 @@ class ClubServer {
       user.putIfAbsent('verified', () => false);
       user.putIfAbsent('disabled', () => false);
     }
-    {
+    if (seedCatalog) {
       for (final u in universities) {
         if (rows('groups').any((g) => g['university'] == u['id'])) continue;
         for (final name in [
@@ -143,8 +160,8 @@ class ClubServer {
           });
         }
       }
-      save();
     }
+    save();
   }
   List<dynamic> rows(String key) => data[key] as List<dynamic>;
   Map<String, dynamic>? find(String key, String value) {
@@ -195,6 +212,11 @@ class ClubServer {
     'birthYear': user['birthYear'],
     'grade': user['grade'],
     'emailVerified': user['emailVerified'] == true,
+    'managementRole': owner(user) ? 'owner' : user['managementRole'],
+    'permissions': owner(user)
+        ? institutionPermissions
+        : user['permissions'] ?? [],
+    'membershipStatus': user['membershipStatus'] ?? 'approved',
   };
   Map<String, dynamic> author(String uid) {
     final user = find('users', uid);
@@ -215,6 +237,8 @@ class ClubServer {
     );
     rows('sessions').add({
       'id': await digest(token),
+      'handle': id(),
+      'created': now(),
       'user': user['id'],
       'expires': DateTime.now()
           .toUtc()
@@ -277,6 +301,13 @@ class ClubServer {
     request.response.headers.contentType = ContentType.json;
     request.response.headers.set('Cache-Control', 'no-store');
     try {
+      if (request.method == 'GET' &&
+          request.uri.pathSegments.length == 3 &&
+          request.uri.pathSegments[0] == 'product' &&
+          request.uri.pathSegments[1] == 'voice-files') {
+        await serveVoiceAttachment(request);
+        return;
+      }
       if (request.uri.pathSegments.length == 3 &&
           request.uri.pathSegments.first == 'documents' &&
           request.uri.pathSegments.last == 'content' &&
@@ -318,12 +349,20 @@ class ClubServer {
       return {
         'ok': true,
         'service': 'stuclub',
-        'version': '2.0.0',
+        'version': '3.0.0',
         'storage': store == null ? 'json' : 'sqlite',
       };
     }
     if (request.uri.path == '/universities' && method == 'GET') {
-      return {'items': institutionList()};
+      return {
+        'items': institutionList()
+            .where(
+              (r) =>
+                  institutionConfig(r['id'])['active'] != false &&
+                  r['kind'] != 'platform',
+            )
+            .toList(),
+      };
     }
     if (p.length == 2 &&
         p[0] == 'auth' &&
@@ -353,7 +392,9 @@ class ClubServer {
       if (p[1] == 'register') {
         final university = field(b, 'university');
         final name = field(b, 'name', min: 2, max: 60);
-        if (institution(university) == null) {
+        if (institution(university) == null ||
+            institution(university)?['kind'] == 'platform' ||
+            institutionConfig(university)['active'] == false) {
           throw ApiError(400, 'اختر مؤسسة صحيحة');
         }
         if (institution(university)?['kind'] == 'school') {
@@ -385,6 +426,10 @@ class ClubServer {
             'birthYear': b['birthYear'],
           if (institution(university)?['kind'] == 'school') 'grade': b['grade'],
           'role': 'student',
+          'membershipStatus':
+              institutionConfig(university)['approvalRequired'] == true
+              ? 'pending'
+              : 'approved',
           'bio': '',
           'verified': false,
           'disabled': false,
@@ -392,6 +437,17 @@ class ClubServer {
           'password': base64.encode(await hash.extractBytes()),
         };
         rows('users').add(user);
+        if (user['membershipStatus'] == 'pending') {
+          rows('membershipRequests').add({
+            'id': id(),
+            'user': user['id'],
+            'university': university,
+            'previous': university,
+            'status': 'pending',
+            'note': 'طلب تسجيل جديد',
+            'created': now(),
+          });
+        }
         return login(user);
       }
       // Run the KDF even for unknown accounts to reduce account timing leaks.
@@ -417,6 +473,24 @@ class ClubServer {
     }
     final user = await authenticated(request);
     final uid = user['id'] as String;
+    productGuard(request, user);
+    final productResult = await product(request, user);
+    if (productResult != null) return productResult;
+    if (user['role'] != 'admin' &&
+        (user['membershipStatus'] == 'pending' ||
+            institutionConfig(user['university'])['active'] == false) &&
+        !request.uri.path.startsWith('/account/') &&
+        ![
+          '/me',
+          '/auth/logout',
+          '/verification',
+          '/services',
+          '/devices',
+          '/email/verify/request',
+          '/email/verify/confirm',
+        ].contains(request.uri.path)) {
+      throw ApiError(403, 'انتظر اعتماد المؤسسة أو اطلب الانتقال لمؤسسة أخرى');
+    }
     if ((requireVerification || school(user)) &&
         user['verified'] != true &&
         user['role'] != 'admin' &&
@@ -491,6 +565,8 @@ class ClubServer {
               ...r as Map<String, dynamic>,
               'author': author(r['user']),
               'liked': (r['likes'] as List).contains(uid),
+              'saved': rows('savedPosts')
+                  .any((v) => v['user'] == uid && v['post'] == r['id']),
               'likeCount': (r['likes'] as List).length,
               'commentCount': rows('comments')
                   .where(
@@ -519,6 +595,7 @@ class ClubServer {
     if (p.length == 1 &&
         ['posts', 'stories'].contains(p[0]) &&
         method == 'POST') {
+      socialRate(user, 'posts', limit: 15);
       final b = await body(request);
       final media = b['media'];
       if (media != null) {
@@ -776,6 +853,7 @@ Future<void> main() async {
   final app = ClubServer(
     env['STU_DATA'] ?? 'data/club.json',
     sqlite: env['STU_STORAGE'] != 'json',
+    seedCatalog: env['STU_SEED_CATALOG'] == 'true',
   );
   await app.bootstrapOwner(env);
   final operatorFile = File('${app.file.parent.path}/operator.json');
@@ -819,6 +897,8 @@ Future<void> main() async {
   }
   var delivering = false;
   Timer.periodic(const Duration(seconds: 5), (_) async {
+    app.eventReminders();
+    app.scheduledAnnouncements();
     if (delivering || app.pendingPush.isEmpty) return;
     delivering = true;
     final ids = app.pendingPush.toList();

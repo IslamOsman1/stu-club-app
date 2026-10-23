@@ -1,6 +1,39 @@
 part of 'server.dart';
 
 extension AcademicFeatures on ClubServer {
+  void scheduledAnnouncements() {
+    var changed = false;
+    final current = DateTime.now().toUtc();
+    for (final a in rows(
+      'announcements',
+    ).where((r) => r['notified'] == false)) {
+      if (DateTime.parse(a['publishAt']).isAfter(current)) continue;
+      a['notified'] = true;
+      changed = true;
+      if (a['expiresAt'] != null &&
+          !DateTime.parse(a['expiresAt']).isAfter(current)) {
+        continue;
+      }
+      for (final person in rows('users').where(
+        (r) =>
+            r['disabled'] != true &&
+            seesAnnouncement(
+              a as Map<String, dynamic>,
+              r as Map<String, dynamic>,
+            ),
+      )) {
+        notify(
+          person['id'],
+          a['user'],
+          'announcement',
+          'إعلان أكاديمي جديد',
+          target: a['id'],
+        );
+      }
+    }
+    if (changed) save();
+  }
+
   void recordActivity(String uid) {
     final day = now().substring(0, 10);
     if (!rows('activity').any((r) => r['user'] == uid && r['day'] == day)) {
@@ -14,6 +47,17 @@ extension AcademicFeatures on ClubServer {
   bool seesAnnouncement(Map<String, dynamic> a, Map<String, dynamic> u) {
     if (a['university'] != u['university']) return false;
     if (u['role'] == 'admin') return true;
+    final current = DateTime.now().toUtc();
+    if (a['user'] != u['id'] &&
+        a['publishAt'] != null &&
+        DateTime.parse(a['publishAt']).isAfter(current)) {
+      return false;
+    }
+    if (a['user'] != u['id'] &&
+        a['expiresAt'] != null &&
+        !DateTime.parse(a['expiresAt']).isAfter(current)) {
+      return false;
+    }
     if (a['section'] != null) {
       final section = find('sections', a['section']);
       return section != null && sectionMember(section, u);
@@ -61,6 +105,28 @@ extension AcademicFeatures on ClubServer {
         throw ApiError(403, 'نشر الإعلانات للحسابات التعليمية المعتمدة فقط');
       }
       final b = await body(req), text = field(b, 'text', max: 3000);
+      final publishAt = b['publishAt'] == null
+          ? DateTime.now().toUtc()
+          : DateTime.tryParse(b['publishAt'].toString());
+      final expiresAt = b['expiresAt'] == null
+          ? null
+          : DateTime.tryParse(b['expiresAt'].toString());
+      if (publishAt == null ||
+          (b['expiresAt'] != null &&
+              (expiresAt == null || !expiresAt.isAfter(publishAt)))) {
+        throw ApiError(400, 'أوقات غير صحيحة');
+      }
+      final importance = b['importance'] ?? 'normal';
+      if (!['normal', 'important', 'urgent'].contains(importance)) {
+        throw ApiError(400, 'أهمية غير صحيحة');
+      }
+      final attachment = b['document'];
+      if (attachment != null) {
+        final doc = find('documents', attachment);
+        if (doc == null || !contentVisible(doc, u)) {
+          throw ApiError(400, 'مستند غير متاح');
+        }
+      }
       final group = b['group'];
       final section = b['section'];
       if (group != null && section != null) {
@@ -99,12 +165,21 @@ extension AcademicFeatures on ClubServer {
         'text': text,
         'created': now(),
         'pinned': b['pinned'] == true,
+        'publishAt': publishAt.toUtc().toIso8601String(),
+        'expiresAt': expiresAt?.toUtc().toIso8601String(),
+        'importance': importance,
+        'document': attachment,
+        'notified': !publishAt.isAfter(DateTime.now().toUtc()),
         'views': <dynamic>[],
       };
       rows('announcements').add(a);
-      for (final recipient in rows(
-        'users',
-      ).where((r) => r['disabled'] != true && seesAnnouncement(a, r))) {
+      auditAction(u, 'announcement-create', a['id'] as String);
+      for (final recipient in rows('users').where(
+        (r) =>
+            a['notified'] == true &&
+            r['disabled'] != true &&
+            seesAnnouncement(a, r),
+      )) {
         notify(
           recipient['id'],
           uid,
@@ -136,12 +211,60 @@ extension AcademicFeatures on ClubServer {
       }
       if (p.length == 2 && method == 'PATCH') {
         final b = await body(req);
-        if (b['pinned'] is! bool) throw ApiError(400, 'حالة التثبيت غير صحيحة');
-        a['pinned'] = b['pinned'];
+        final update = <String, dynamic>{};
+        if (b.containsKey('pinned')) {
+          if (b['pinned'] is! bool) {
+            throw ApiError(400, 'حالة التثبيت غير صحيحة');
+          }
+          update['pinned'] = b['pinned'];
+        }
+        if (b.containsKey('text')) update['text'] = field(b, 'text', max: 3000);
+        if (b.containsKey('importance')) {
+          if (!['normal', 'important', 'urgent'].contains(b['importance'])) {
+            throw ApiError(400, 'أهمية غير صحيحة');
+          }
+          update['importance'] = b['importance'];
+        }
+        if (b.containsKey('publishAt') || b.containsKey('expiresAt')) {
+          final published = b.containsKey('publishAt')
+              ? (b['publishAt'] == null
+                    ? DateTime.now().toUtc()
+                    : DateTime.tryParse(b['publishAt'].toString()))
+              : DateTime.parse(a['publishAt'] ?? a['created']);
+          final expiryRaw = b.containsKey('expiresAt')
+              ? b['expiresAt']
+              : a['expiresAt'];
+          final expires = expiryRaw == null
+              ? null
+              : DateTime.tryParse(expiryRaw.toString());
+          if (published == null ||
+              (expiryRaw != null &&
+                  (expires == null || !expires.isAfter(published)))) {
+            throw ApiError(400, 'أوقات غير صحيحة');
+          }
+          update['publishAt'] = published.toUtc().toIso8601String();
+          update['expiresAt'] = expires?.toUtc().toIso8601String();
+          if (published.isAfter(DateTime.now().toUtc())) {
+            update['notified'] = false;
+          }
+        }
+        if (b.containsKey('document')) {
+          final document = b['document'];
+          final doc = document is String ? find('documents', document) : null;
+          if (document != null && (doc == null || !contentVisible(doc, u))) {
+            throw ApiError(400, 'مستند غير متاح');
+          }
+          update['document'] = document;
+        }
+        if (update.isEmpty) throw ApiError(400, 'لا توجد تعديلات صالحة');
+        a.addAll(update);
+        a['edited'] = now();
+        auditAction(u, 'announcement-update', a['id']);
         save();
         return {'ok': true};
       }
       if (p.length == 2 && method == 'DELETE') {
+        auditAction(u, 'announcement-delete', a['id']);
         rows('announcements').remove(a);
         save();
         return {'ok': true};

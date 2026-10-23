@@ -28,6 +28,11 @@ extension ContentFeatures on ClubServer {
 
   Future<void> serveDocument(HttpRequest req) async {
     final u = await authenticated(req);
+    if (u['role'] != 'admin' &&
+        (u['membershipStatus'] == 'pending' ||
+            institutionConfig(u['university'])['active'] == false)) {
+      throw ApiError(403, 'المؤسسة غير متاحة');
+    }
     if ((requireVerification || school(u)) &&
         u['verified'] != true &&
         u['role'] != 'admin') {

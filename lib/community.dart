@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'design.dart';
+import 'product_chat.dart';
 
 typedef Json = Map<String, dynamic>;
 Future<T?> openPage<T>(BuildContext context, Widget page) => Navigator.push<T>(
@@ -96,7 +97,11 @@ class _FieldsState extends State<_Fields> {
   );
 }
 
-Future<bool> confirm(BuildContext context, String title, String text) async =>
+Future<bool> confirm(
+  BuildContext context,
+  String title, [
+  String text = 'راجع الإجراء قبل التأكيد.',
+]) async =>
     (await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
@@ -452,207 +457,16 @@ Widget inboxPage(Api api) => RemotePanel(
   ),
 );
 
-class DirectChat extends StatefulWidget {
+class DirectChat extends StatelessWidget {
   final Api api;
   final Json person;
   const DirectChat({super.key, required this.api, required this.person});
   @override
-  State<DirectChat> createState() => _DirectChatState();
-}
-
-class _DirectChatState extends State<DirectChat> {
-  final text = TextEditingController();
-  List<dynamic> items = [];
-  bool fetching = false, sending = false;
-  String? error;
-  Timer? timer;
-  @override
-  void initState() {
-    super.initState();
-    load();
-    timer = Timer.periodic(const Duration(seconds: 4), (_) => load());
-  }
-
-  @override
-  void dispose() {
-    timer?.cancel();
-    text.dispose();
-    super.dispose();
-  }
-
-  Future<void> load() async {
-    if (fetching) return;
-    fetching = true;
-    try {
-      final res = await widget.api.call('/direct/${widget.person['id']}');
-      if (mounted) {
-        setState(() {
-          items = res['items'] as List;
-          error = null;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    } finally {
-      fetching = false;
-    }
-  }
-
-  Future<void> send() async {
-    if (sending || text.text.trim().isEmpty) return;
-    setState(() => sending = true);
-    try {
-      await widget.api.call(
-        '/direct/${widget.person['id']}',
-        method: 'POST',
-        body: {'text': text.text.trim()},
-      );
-      text.clear();
-      await load();
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    } finally {
-      if (mounted) setState(() => sending = false);
-    }
-  }
-
-  Future<void> reportMessage(Map<String, dynamic> message) async {
-    final values = await askFields(context, 'إبلاغ عن الرسالة', {
-      'reason': 'سبب الإبلاغ',
-    });
-    if (values == null || !mounted) return;
-    try {
-      await widget.api.call(
-        '/reports',
-        method: 'POST',
-        body: {
-          'type': 'direct',
-          'target': message['id'],
-          'reason': values['reason'],
-        },
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('تم حفظ البلاغ للمراجعة')));
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: Row(
-        children: [
-          ClubAvatar(name: widget.person['name'] as String, size: 35),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.person['name'] as String,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const Text(
-                  'زميل من جامعتك',
-                  style: TextStyle(fontSize: 10, color: ClubStyle.muted),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        IconButton(
-          tooltip: 'حظر المستخدم',
-          onPressed: () async {
-            if (!await confirm(
-              context,
-              'حظر المستخدم؟',
-              'سيتم منع الرسائل بينكما.',
-            )) {
-              return;
-            }
-            try {
-              await widget.api.call(
-                '/blocks/${widget.person['id']}',
-                method: 'POST',
-              );
-              if (mounted) Navigator.pop(this.context);
-            } catch (e) {
-              if (mounted) setState(() => error = e.toString());
-            }
-          },
-          icon: const Icon(Icons.more_horiz),
-        ),
-      ],
-    ),
-    body: Column(
-      children: [
-        Container(
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.forum_outlined, size: 13, color: ClubStyle.muted),
-              SizedBox(width: 6),
-              Text(
-                'مساحة للكلام والمشاركة',
-                style: TextStyle(fontSize: 10, color: ClubStyle.muted),
-              ),
-            ],
-          ),
-        ),
-        if (error != null)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              error!,
-              style: const TextStyle(color: Colors.deepOrange, fontSize: 12),
-            ),
-          ),
-        Expanded(
-          child: items.isEmpty
-              ? const Center(
-                  child: ClubEmpty(
-                    title: 'أول رسالة بتفتح حكاية',
-                    subtitle: 'ابدأ بسؤال أو تحية لطيفة.',
-                    icon: Icons.waving_hand_outlined,
-                  ),
-                )
-              : ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 14,
-                  ),
-                  itemCount: items.length,
-                  itemBuilder: (_, i) {
-                    final m =
-                        items[items.length - 1 - i] as Map<String, dynamic>;
-                    final mine = m['from'] != widget.person['id'];
-                    return MessageBubble(
-                      name: m['author']['name'] as String,
-                      text: m['text'] as String,
-                      mine: mine,
-                      created: m['created'] as String?,
-                      report: mine ? null : () => reportMessage(m),
-                    );
-                  },
-                ),
-        ),
-        MessageComposer(controller: text, sending: sending, send: send),
-      ],
-    ),
+  Widget build(BuildContext context) => ProductChat(
+    api: api,
+    kind: 'direct',
+    target: person['id'],
+    title: person['name'],
   );
 }
 

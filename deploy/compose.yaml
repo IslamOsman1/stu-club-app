@@ -10,6 +10,10 @@ services:
       STU_REQUIRE_VERIFICATION: "true"
       STU_TRUST_PROXY: "true"
       STU_ADMIN_EMAILS: ${STU_ADMIN_EMAILS:?Set the administrator email}
+      STU_OWNER_EMAIL: ${STU_OWNER_EMAIL:?Set the platform owner email}
+      STU_OWNER_PASSWORD: ${STU_OWNER_PASSWORD:?Set a strong initial owner password}
+      STU_SEED_CATALOG: "false"
+      STU_ICE_SERVERS_JSON: ${STU_ICE_SERVERS_JSON:-}
       STU_MAIL_MODE: ${STU_MAIL_MODE:-outbox}
       STU_SMTP_HOST: ${STU_SMTP_HOST:-}
       STU_SMTP_PORT: ${STU_SMTP_PORT:-587}

@@ -8,6 +8,10 @@ function backendUrl(){
  return url.origin;
 }
 const allowed = [
+ ['GET',/^\/product\/(manage\/(overview|units|membership|invitations|support|appeals|audit)|events(\/[^/]+\/registrations)?)$/],
+ ['POST',/^\/product\/(manage\/(roles|units|membership\/[^/]+|invitations|support\/[^/]+|appeals\/[^/]+|units\/[^/]+\/archive)|events(\/[^/]+\/cancel)?)$/],
+ ['PATCH',/^\/product\/(manage\/institutions|events\/[^/]+)$/],
+ ['DELETE',/^\/product\/manage\/invitations\/[^/]+$/],
  ['GET',/^\/(me|health|admin\/overview|institutions\/manage|courses|courses\/people|announcements|announcement-reports|groups|documents|polls|tournaments|services)$/],
  ['POST',/^\/(institutions|institutions\/select|courses|courses\/[^/]+\/sections|admin\/(users|verification|reports)\/[^/]+|announcements|polls\/[^/]+\/close)$/],
  ['PATCH',/^\/(sections\/[^/]+|institutions\/students\/[^/]+|announcements\/[^/]+)$/],
