@@ -23,6 +23,10 @@ export default async function handler(req,res){
  try{
   const input=typeof req.body==='string'?JSON.parse(req.body):req.body;
   if(input&&Buffer.byteLength(JSON.stringify(input))>90000)return send(413,{error:'الطلب كبير'});
+  if(path==='/ready'&&req.method==='GET'){
+   const r=await call('/health','GET',undefined,null);
+   return send(r.status===200&&r.data.ok===true?200:503,{ready:r.status===200&&r.data.ok===true});
+  }
   if(path==='/login'&&req.method==='POST'){
    const r=await call('/auth/login','POST',{email:input?.email,password:input?.password},null);
    if(r.status!==200)return send(r.status,r.data);

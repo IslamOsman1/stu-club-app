@@ -54,7 +54,16 @@ async function render(page){
 function addInstitution(){form('إضافة جامعة أو مدرسة',[field('name','اسم المؤسسة',{max:100}),field('kind','النوع',{options:[{value:'university',label:'جامعة'},{value:'school',label:'مدرسة'}]})],d=>mutate('/institutions','POST',d));}
 async function switchOrg(id){const d=await api('/institutions/select','POST',{institution:id});me=d.user;await load();}
 function sectionForm(course,s,people){form(s?'تعديل الشعبة':'إضافة شعبة',[field('name','اسم الشعبة',{value:s?.name,max:80}),field('teachers','المدرسون المعتمدون (يمكن اختيار أكثر من اسم)',{multiple:true,value:s?.teachers.map(t=>t.id)||[],options:people.filter(p=>p.role==='doctor'&&p.verified&&!p.disabled).map(p=>({value:p.id,label:p.name}))}),field('students','الطلاب (Ctrl أو ⌘ لاختيار أكثر من اسم)',{multiple:true,value:s?.students.map(t=>t.id)||[],options:people.filter(p=>p.role==='student'&&!p.disabled).map(p=>({value:p.id,label:p.name}))}),...(s?[field('active','حالة الشعبة',{value:String(s.active),options:[{value:'true',label:'نشطة'},{value:'false',label:'مؤرشفة'}]})]:[])],d=>mutate(s?'/sections/'+s.id:'/courses/'+course.id+'/sections',s?'PATCH':'POST',{...d,...(s?{active:d.active==='true'}:{})}));}
-$('#login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter||e.target.querySelector('button.primary');b.disabled=true;$('#login-error').textContent='';try{const d=await api('/login','POST',{email:e.target.email.value,password:e.target.password.value});me=d.user;showApp();await load();}catch(err){$('#login-error').textContent=err.message;}finally{b.disabled=false;}};
+async function warmUp(){
+ for(let attempt=1;attempt<=3;attempt++){
+  $('#login-error').textContent=attempt===1?'جاري الاتصال بالخادم… قد تحتاج الخدمة المجانية دقيقة للاستيقاظ.':'ما زلنا ننتظر جاهزية الخادم… المحاولة '+attempt+' من 3.';
+  $('#login-error').classList.add('waiting');
+  try {const d=await api('/ready');if(d.ready)return;}catch{}
+  if(attempt<3)await new Promise(resolve=>setTimeout(resolve,3000));
+ }
+ throw Error('الخادم لم يجهز بعد. أعد المحاولة بعد دقيقة. لم نغيّر حسابك.');
+}
+$('#login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter||e.target.querySelector('button.primary');b.disabled=true;$('#login-error').textContent='';try{await warmUp();$('#login-error').textContent='جاري التحقق من حسابك…';const d=await api('/login','POST',{email:e.target.email.value,password:e.target.password.value});me=d.user;showApp();await load();}catch(err){$('#login-error').classList.remove('waiting');$('#login-error').textContent=err.message;}finally{b.disabled=false;}};
 $('#logout').onclick=async()=>{try{await api('/logout','POST',{});}catch(e){toast(e.message);}me=null;showLogin();};$('#refresh').onclick=()=>load();$('#institution').onchange=async e=>{try{await switchOrg(e.target.value);}catch(err){toast(err.message);await load();}};$('#close-modal').onclick=()=>$('#dialog').close();window.addEventListener('hashchange',()=>{if(me)load();});
 try{me=(await api('/me')).user;showApp();await load();}catch{showLogin();}
 
