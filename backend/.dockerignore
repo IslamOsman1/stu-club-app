@@ -1,0 +1,8 @@
+data/
+backups/
+run/
+.dart_tool/
+build/
+.env*
+*.sqlite*
+.git/

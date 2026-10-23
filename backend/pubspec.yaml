@@ -1,0 +1,13 @@
+name: stu_club_server
+description: Local development API for STU Club.
+publish_to: none
+environment:
+  sdk: ^3.13.3
+dependencies:
+  archive: ^4.5.2
+  cryptography: ^2.7.0
+  googleapis_auth: ^2.3.5
+  mailer: ^7.2.0
+  sqlite3: ^3.7.1
+dev_dependencies:
+  test: ^1.25.0

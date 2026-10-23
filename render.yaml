@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: stu-club-api
+    runtime: docker
+    plan: starter
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    numInstances: 1
+    disk:
+      name: stu-club-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: STU_HOST
+        value: 0.0.0.0
+      - key: STU_STORAGE
+        value: sqlite
+      - key: STU_DATA
+        value: /app/data/club.json
+      - key: STU_TRUST_PROXY
+        value: "true"
+      - key: STU_MAIL_MODE
+        value: outbox
+      - key: STU_ADMIN_EMAILS
+        sync: false
