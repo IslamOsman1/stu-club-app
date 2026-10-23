@@ -2,16 +2,12 @@ services:
   - type: web
     name: stu-club-api
     runtime: docker
-    plan: starter
+    plan: free
     rootDir: backend
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     numInstances: 1
-    disk:
-      name: stu-club-data
-      mountPath: /app/data
-      sizeGB: 1
     envVars:
       - key: STU_HOST
         value: 0.0.0.0
@@ -25,3 +21,4 @@ services:
         value: outbox
       - key: STU_ADMIN_EMAILS
         sync: false
+
