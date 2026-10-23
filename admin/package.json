@@ -1,1 +1,15 @@
-{"name":"stu-club-admin","private":true,"type":"module","scripts":{"test":"node --test"},"engines":{"node":"22.x"}}
+{
+  "name": "stu-club-admin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:ui": "node ui-check.mjs"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "devDependencies": {
+    "jsdom": "27.0.0"
+  }
+}

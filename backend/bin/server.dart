@@ -15,6 +15,7 @@ import 'package:cryptography/cryptography.dart';
 
 part 'features.dart';
 part 'academic.dart';
+part 'owner_setup.dart';
 part 'courses.dart';
 part 'friends_play.dart';
 part 'institutions.dart';
@@ -776,6 +777,7 @@ Future<void> main() async {
     env['STU_DATA'] ?? 'data/club.json',
     sqlite: env['STU_STORAGE'] != 'json',
   );
+  await app.bootstrapOwner(env);
   final operatorFile = File('${app.file.parent.path}/operator.json');
   final operator = operatorFile.existsSync()
       ? jsonDecode(operatorFile.readAsStringSync()) as Map<String, dynamic>
