@@ -74,3 +74,6 @@ backend/run/
 *.sqlite*
 *.pem
 *.p12
+
+.vercel/
+

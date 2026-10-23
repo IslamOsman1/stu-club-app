@@ -1,0 +1,8 @@
+# StuClub Admin
+Arabic administration console for the StuClub backend. Deploy this directory as its own Vercel project, framework Other, output public, no build command. API function api/gateway.js forwards only an explicit allowlist to the fixed Render backend. Node 22.
+
+Login uses the existing StuClub admin account. No credentials or bootstrap admin email are shipped to the browser. A successful student login is immediately revoked and rejected. Tokens are held in a Secure HttpOnly SameSite=Strict host-only cookie; each request rechecks the backend admin role. Writes require same-origin requests. No CORS permissions or direct browser access to backend sessions are needed. The dashboard does not expose private direct chats. Render Free data remains ephemeral.
+
+Features: overview with actual counts, institution creation and selection, global account search and disable/re-enable, verification approval/rejection, reports dismiss/content removal, course creation, section membership and teacher assignment/archive, announcements publish/pin/delete, announcement readership reports, group listing, document and poll moderation, service status. No institution delete, admin-role self-promotion, user-password viewing, or payment controls.
+
+Run `node --test gateway.test.js`. Tests cover allowlist, absent session, cross-origin writes, student rejection/revocation, HttpOnly cookie and admin revalidation. Activate the owner by setting STU_ADMIN_EMAILS in Render to the existing account email and restarting the backend. Do not put this setting or secrets in source control. Account activation is performed by the deployment operator, not by the web page.

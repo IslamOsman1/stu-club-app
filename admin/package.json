@@ -1,0 +1,1 @@
+{"name":"stu-club-admin","private":true,"type":"module","scripts":{"test":"node --test"},"engines":{"node":"22.x"}}
