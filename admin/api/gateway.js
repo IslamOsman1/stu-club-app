@@ -38,6 +38,7 @@ export default async function handler(req,res){
   }
   if(!token)return send(401,{error:'سجّل الدخول أولًا'});
   const me=await call('/me');
+  if(me.status>=500)return send(503,{error:'الخادم مشغول مؤقتًا. أعد المحاولة بعد قليل.'});
   if(me.status!==200||me.data.user?.role!=='admin'){res.setHeader('Set-Cookie',cookie('',0));return send(me.status===401?401:403,{error:'جلسة الإدارة غير متاحة'});}
   if(!permitted(req.method,path))return send(403,{error:'العملية غير متاحة في لوحة الإدارة'});
   if(path==='/me')return send(200,me.data);

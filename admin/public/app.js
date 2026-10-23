@@ -7,7 +7,7 @@ function empty(text='لا توجد عناصر حاليًا'){return `<div class=
 function table(headers,rows,search=true){return `<div class="panel">${search?'<div class="toolbar"><h3>السجلات</h3><input id="search" type="search" placeholder="بحث في القائمة…" aria-label="بحث في السجلات"></div>':''}${rows.length?`<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td ${i===0?'class="text"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:empty()}</div>`;}
 function toolbar(title,buttons=''){return `<div class="toolbar"><div><h2>${esc(title)}</h2></div><div>${buttons}</div></div>`;}
 function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',4500);}
-async function api(path,method='GET',body){const r=await fetch('/api/gateway?path='+encodeURIComponent(path),{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await r.json();if(!r.ok){if(r.status===401){me=null;showLogin();}throw Error(data.error||'تعذر إتمام الطلب');}return data;}
+async function api(path,method='GET',body,retry=true){const r=await fetch('/api/gateway?path='+encodeURIComponent(path),{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await r.json();if(!r.ok&&retry&&method==='GET'&&path!=='/ready'&&[502,503,504].includes(r.status)){await new Promise(resolve=>setTimeout(resolve,3000));return api(path,method,body,false);}if(!r.ok){if(r.status===401){me=null;showLogin();}throw Error(data.error||'تعذر إتمام الطلب');}return data;}
 function showLogin(){$('#shell').hidden=true;$('#login').hidden=false;$('#login-form').reset();}
 function showApp(){$('#shell').hidden=false;$('#login').hidden=true;$('#who').textContent=me.name;}
 async function mutate(path,method,body){await api(path,method,body);toast('تم حفظ التغيير');await load();}
@@ -63,8 +63,9 @@ async function warmUp(){
  }
  throw Error('الخادم لم يجهز بعد. أعد المحاولة بعد دقيقة. لم نغيّر حسابك.');
 }
-$('#login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter||e.target.querySelector('button.primary');b.disabled=true;$('#login-error').textContent='';try{await warmUp();$('#login-error').textContent='جاري التحقق من حسابك…';const d=await api('/login','POST',{email:e.target.email.value,password:e.target.password.value});me=d.user;showApp();await load();}catch(err){$('#login-error').classList.remove('waiting');$('#login-error').textContent=err.message;}finally{b.disabled=false;}};
+$('#login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter||e.target.querySelector('button.primary');b.disabled=true;$('#login-error').textContent='';try{await warmUp();$('#login-error').textContent='جاري التحقق من حسابك…';const d=await api('/login','POST',{email:e.target.elements.namedItem('email').value,password:e.target.elements.namedItem('password').value});me=d.user;showApp();await load();}catch(err){$('#login-error').classList.remove('waiting');$('#login-error').textContent=err.message;}finally{b.disabled=false;}};
 $('#logout').onclick=async()=>{try{await api('/logout','POST',{});}catch(e){toast(e.message);}me=null;showLogin();};$('#refresh').onclick=()=>load();$('#institution').onchange=async e=>{try{await switchOrg(e.target.value);}catch(err){toast(err.message);await load();}};$('#close-modal').onclick=()=>$('#dialog').close();window.addEventListener('hashchange',()=>{if(me)load();});
 try{me=(await api('/me')).user;showApp();await load();}catch{showLogin();}
+
 
 
